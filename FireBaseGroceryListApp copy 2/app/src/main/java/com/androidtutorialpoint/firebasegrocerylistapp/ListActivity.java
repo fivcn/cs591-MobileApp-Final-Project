@@ -5,19 +5,22 @@ import android.content.Intent;
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.media.Image;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.support.v4.content.FileProvider;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
-import android.os.Bundle;
+import android.text.Editable;
+import android.text.SpannableStringBuilder;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.widget.ArrayAdapter;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.EditText;
@@ -25,7 +28,12 @@ import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.TextView;
 
-import com.androidtutorialpoint.firebasegrocerylistapp.Item;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
 import com.googlecode.leptonica.android.AdaptiveMap;
 import com.googlecode.leptonica.android.Binarize;
 import com.googlecode.leptonica.android.Convert;
@@ -46,20 +54,27 @@ import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Random;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class ListActivity extends AppCompatActivity {
-    List<Item> list;
+    List<ListItem> list;
     MyAdapter adapter;
+    ArrayAdapter<ListItem> adapterLI;
     String[] tag1s = {"meat", "veggies", "dairy", "ice-cream"};
-    String[] tag2s = {"refrigerator", "freezer"};
+    String[] tag2s = {"Refrigerator","Freezer"};
     ListView lv;
     TextView tv[];//bottom
+    ArrayList<ListItem> updateBG;
+    Map<String, Boolean> inBG;
+    Map<String, Integer> find;
 
+    Button submit;
 
+    DatabaseReference mBackDB;
     /********** used for camera and OCR --start *************/
     String[] ocrResult;
 
@@ -128,7 +143,7 @@ public class ListActivity extends AppCompatActivity {
         pixtest = binarization.sauvolaBinarizeTiled(pixtest);
         Skew skw = new Skew();
         float angle = skw.findSkew(pixtest);
-        Log.i("angle: ",Float.toString(angle));
+        Log.i("angle: ", Float.toString(angle));
         Rotate rot = new Rotate();
         pixtest = rot.rotate(pixtest,angle);
         Bitmap bm2 = wtf.writeBitmap(pixtest);
@@ -138,8 +153,65 @@ public class ListActivity extends AppCompatActivity {
 
         mTess.setImage(bm2);
         String ocrRawData = mTess.getUTF8Text();
-        String[] result = split(ocrRawData); //get the final OCR result;
+        ocrResult = split(ocrRawData); //get the final OCR result;
+
+
+        addToView(ocrResult);
     } //process the taken image
+
+    //qpx: add to view: add the ocr result to listview
+    public void addToView(String[] result)
+    {
+        updateBG = new ArrayList<>();
+        mBackDB= FirebaseDatabase.getInstance().getReference().child("resource");
+        for(final String rawItem:result) {
+            //1. check whether in background database.
+            //if so fill int the form
+            //else leave it blank and let user fill it.
+        mBackDB.child(rawItem.toUpperCase().trim()).addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot dataSnapshot) {
+                Log.w("firebase", mBackDB.child(rawItem.toUpperCase().trim()).toString());
+                BGItem bgItem = dataSnapshot.getValue(BGItem.class);
+                if (bgItem != null) {
+                    ListItem listItem = new ListItem(bgItem);
+                    Log.w("item1:",listItem.getListItemText());
+
+                    inBG.put(listItem.getListItemText(),true);
+                    list.add(listItem);
+                    adapter.update(list);
+
+                } else {
+                    ListItem listItem = new ListItem();
+                    listItem.setListItemText(rawItem);
+
+                    //test bg:
+                    listItem.setExpirationDate("10");
+                    //
+
+
+                    find.put(rawItem,find.size());
+                    list.add(listItem);
+                    updateBG.add(listItem);
+                    adapter.update(list);
+                }
+            }
+
+            @Override
+            public void onCancelled(DatabaseError databaseError) {
+
+            }
+        });
+        }
+
+
+
+
+    }
+
+
+
+
     private String[] split(String raw)  //split the raw result
     {
         List<String> resList = new ArrayList<>();
@@ -166,7 +238,7 @@ public class ListActivity extends AppCompatActivity {
             // whole food/ starmarket /hmarket/
             if(temp[i].matches(".*\\bF$")){
                 //WHOLE FOOD:
-                Log.w("@::",Boolean.toString(temp[i].contains("@")));
+                Log.w("@::", Boolean.toString(temp[i].contains("@")));
 //                Log.w("temp i-1::",temp[i-1]);
                 if(temp[i].contains("@")) {
                     Log.w("temp2 i-1::",temp[i-1]);
@@ -266,10 +338,13 @@ public class ListActivity extends AppCompatActivity {
         if (getSupportActionBar() != null){
             getSupportActionBar().hide();
         }
+
+        list = new ArrayList<>();
+
         setContentView(R.layout.activity_list);
         initView();
         initData();
-        adapter = new MyAdapter();
+        adapter = new MyAdapter(list);
         lv.setAdapter(adapter);
 
         /*********** OCR and camera --start ************/
@@ -283,6 +358,9 @@ public class ListActivity extends AppCompatActivity {
         btnUseCamera.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+
+
+
                 dispatchTakePictureIntent();
             }
         });
@@ -294,8 +372,73 @@ public class ListActivity extends AppCompatActivity {
             }
         });
         /*********** OCR and camera --end***************/
+
+
+        // add result to OCR:
+
+        // whether in background list
+        inBG = new HashMap<>();
+        // k:itemname value: item Object. for quick find
+        find = new HashMap<>();
+        //for test.
+        ocrResult =new String[] {"Apple","pear"};
+        addToView(ocrResult);
+
+        // submit new list to firebase
+        submit = (Button) findViewById(R.id.submit_btn);
+
+        submit.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (list.size() == 0)
+                    return;
+                for (ListItem listItem : list) {
+
+                        updateToUserDB(listItem);
+                        if (find.containsKey(listItem.getListItemText()) && listItem.BGable()) {
+                            updateToBackDB(listItem);
+                        }
+
+
+
+
+                }
+                list.clear();
+                find.clear();
+                adapter.update(list);
+
+            }
+        });
     }
 
+    public void updateToUserDB(ListItem listItem)
+    {
+        //repeat element
+
+        //upload
+        final FirebaseDatabase database = FirebaseDatabase.getInstance();
+        String uid = FirebaseAuth.getInstance().getCurrentUser().getUid();
+        DatabaseReference ref = database.getReference().child("listItem").child(uid);
+        String key = ref.push().getKey();
+            Map<String, Object> listItemValues = listItem.toMap();
+            Map<String, Object> childUpdates = new HashMap<>();
+            childUpdates.put(key, listItemValues);
+            ref.updateChildren(childUpdates);
+            Log.w("ref",ref.toString());
+
+    }
+    public void updateToBackDB(ListItem listItem)
+    {
+            DatabaseReference ref = FirebaseDatabase.getInstance().getReference().child("resource");
+            BGItem bgItem = new BGItem(listItem);
+            Map<String,Object> bgitemValue = bgItem.toMap();
+            Map<String, Object> childUpdates = new HashMap<>();
+            childUpdates.put(bgItem.id.toUpperCase(),bgitemValue);
+            ref.updateChildren(childUpdates);
+            Log.w("bgADD:","/resource/" + bgItem.id.toUpperCase());
+
+
+    }
 
 
     @Override
@@ -351,58 +494,29 @@ public class ListActivity extends AppCompatActivity {
             });
         }
     }
-    private int random(int max){
-        Random r = new Random();
-        return r.nextInt(max)%max;
-    }
+
     private void initData() {
-        list = new ArrayList<>();
-        Item item = new Item();
-        item.id = 1;
-        item.name = "Beef";
-        item.tag1 = tag1s[random(tag1s.length)];//random
-        item.tag2 = tag2s[random(tag2s.length)];//random
-        item.date = "7 Days";
-        list.add(item);
-        item = new Item();
-        item.id = 2;
-        item.name = "Milk";
-        item.tag1 = tag1s[random(tag1s.length)];//random
-        item.tag2 = tag2s[random(tag2s.length)];//random
-        item.date = "7 Days";
-        list.add(item);
-        item = new Item();
-        item.id = 3;
-        item.name = "Apple";
-        item.tag1 = tag1s[random(tag1s.length)];//random
-        item.tag2 = tag2s[random(tag2s.length)];//random
-        item.date = "10 Days";
-        list.add(item);
-        item = new Item();
-        item.id = 4;
-        item.name = "Haagen-Dazs";
-        item.tag1 = tag1s[random(tag1s.length)];//random
-        item.tag2 = tag2s[random(tag2s.length)];//random
-        item.date = "2 Days";
-        list.add(item);
-        item = new Item();
-        item.id = 5;
-        item.name = "Orange";
-        item.tag1 = tag1s[random(tag1s.length)];//random
-        item.tag2 = tag2s[random(tag2s.length)];//random
-        item.date = "10 Days";
-        list.add(item);
-        item = new Item();
-        item.id = 6;
-        item.name = "Chicken";
-        item.tag1 = tag1s[random(tag1s.length)];//random
-        item.tag2 = tag2s[random(tag2s.length)];//random
-        item.date = "5 Days";
+        ListItem item = new ListItem();
+
+        item.setListItemText("Beef");
+        item.setExpirationDate("7");
+        item.setTag(tag1s[1]);
+        item.setReOrFree(true);
+        item.setExpirationDate("7");
         list.add(item);
     }
 
     class MyAdapter extends BaseAdapter {
-
+        private List<ListItem> mylist = new ArrayList<>();
+        public void update(List<ListItem> newList)
+        {
+            mylist = newList;
+            notifyDataSetChanged();
+        }
+        MyAdapter(List<ListItem> ini)
+        {
+            mylist.addAll(ini);
+        }
         @Override
         public int getCount() {
             return list.size();
@@ -419,25 +533,111 @@ public class ListActivity extends AppCompatActivity {
         }
 
         @Override
-        public View getView(int position, View convertView, ViewGroup parent) {
+        public View getView(final int position, View convertView, ViewGroup parent) {
             convertView = LayoutInflater.from(ListActivity.this).inflate(R.layout.item_list, null);
+
             TextView id = (TextView) convertView.findViewById(R.id.id);
-            id.setText(list.get(position).id+"");
-            TextView name = (TextView) convertView.findViewById(R.id.name);
-            name.setText(list.get(position).name);
+            id.setText(Integer.toString(position));
+
+            EditText name = (EditText) convertView.findViewById(R.id.name);
+            name.setText(mylist.get(position).getListItemText());
+
+//            name.setOnClickListener(new View.OnClickListener() {
+//                String old;
+//                @Override
+//                public void onClick(View v) {
+//                    old =
+//                }
+//            });
+            name.addTextChangedListener(new TextWatcher() {
+                String old;
+                @Override
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+                old = s.toString();
+                }
+
+                @Override
+                public void onTextChanged(CharSequence s, int start, int before, int count) {
+
+                }
+
+                @Override
+                public void afterTextChanged(Editable s) {
+                    if(s.toString().trim().equals(""))
+                        s = new SpannableStringBuilder(old);
+                    else {
+                        list.get(position).setListItemText(s.toString());
+                        if(find.containsKey(list.get(position).getListItemText()))
+                        {
+                            int index = find.get(list.get(position).getListItemText());
+                            updateBG.get(index).setListItemText(s.toString());
+                        }
+                        Log.w("Name Changed", list.get(position).getListItemText());
+                    }
+                }
+            });
+
+
             TextView tag1 = (TextView) convertView.findViewById(R.id.tag1);
-            tag1.setText(list.get(position).tag1);
+            String tag1str = "";
+            if(mylist.get(position).getTag()!=null)
+            {
+                tag1str = mylist.get(position).getTag();
+
+            }
+            tag1.setText(tag1str);
             tag1.setTag(position);
+
             TextView tag2 = (TextView) convertView.findViewById(R.id.tag2);
-            tag2.setText(list.get(position).tag2);
+            String tag2str = "";
+            if(mylist.get(position).getReOrFree()!=null
+                    && mylist.get(position).getReOrFree().equals("true"))
+                tag2str = tag2s[0];
+            else
+                tag2str = tag2s[1];
+            tag2.setText(tag2str);
             tag2.setTag(position);
+
             EditText et = (EditText) convertView.findViewById(R.id.date);
-            et.setText(list.get(position).date);
+            String days = "0";
+            if(mylist.get(position).getExpirationDate() != null)
+                days = mylist.get(position).getExpirationDate();
+            et.setText(days+"Days");
+            et.addTextChangedListener(new TextWatcher() {
+                String old;
+                @Override
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+                    old = s.toString();
+                }
+
+                @Override
+                public void onTextChanged(CharSequence s, int start, int before, int count) {
+
+                }
+
+                @Override
+                public void afterTextChanged(Editable s) {
+                    if(s.equals(""))
+                        s = new SpannableStringBuilder(old);
+                    else{
+                        list.get(position).setExpirationDate(s.toString());
+                        if(find.containsKey(list.get(position).getListItemText()))
+                        {
+                            int index = find.get(list.get(position).getListItemText());
+                            updateBG.get(index).setTag(s.toString());
+                        }
+                        s = new SpannableStringBuilder(s.toString()+"Days");
+                        Log.w("Day Changed", list.get(position).getExpirationDate());
+                    }
+                }
+            });
+
             tag1.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     int pos = (int) v.getTag();
                     ShowTag1Dialog(pos);
+
                 }
             });
             tag2.setOnClickListener(new View.OnClickListener() {
@@ -459,7 +659,12 @@ public class ListActivity extends AppCompatActivity {
         builder.setItems(tag1s, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
-                list.get(pos).tag1 = tag1s[which];
+                list.get(pos).setTag(tag1s[which]);
+                if(find.containsKey(list.get(pos).getListItemText()))
+                {
+                    int index = find.get(list.get(pos).getListItemText());
+                    updateBG.get(index).setTag(tag1s[which]);
+                }
                 adapter.notifyDataSetChanged();
             }
         });
@@ -473,7 +678,24 @@ public class ListActivity extends AppCompatActivity {
         builder.setItems(tag2s, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
-                list.get(pos).tag2 = tag2s[which];
+                if(which == 0)
+                {
+                    list.get(pos).setReOrFree(true);
+                    if(find.containsKey(list.get(pos).getListItemText()))
+                    {
+                        int index = find.get(list.get(pos).getListItemText());
+                        updateBG.get(index).setReOrFree(true);
+                    }
+                }
+                else {
+                    list.get(pos).setReOrFree(false);
+                    if(find.containsKey(list.get(pos).getListItemText()))
+                    {
+                        int index = find.get(list.get(pos).getListItemText());
+                        updateBG.get(index).setReOrFree(false);
+                    }
+
+                }
                 adapter.notifyDataSetChanged();
             }
         });

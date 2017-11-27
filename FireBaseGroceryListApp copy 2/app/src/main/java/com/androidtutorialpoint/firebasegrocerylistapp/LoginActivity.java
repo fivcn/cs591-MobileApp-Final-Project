@@ -141,7 +141,7 @@ public class LoginActivity extends AppCompatActivity {
                 }
                 else {
 
-                    Intent intent = new Intent(LoginActivity.this, ListItemsActivity.class);
+                    Intent intent = new Intent(LoginActivity.this, MenuActivity.class);
                     startActivity(intent);
                     finish();
                 }
