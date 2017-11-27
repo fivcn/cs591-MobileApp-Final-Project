@@ -17,6 +17,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ListAdapter;
+import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -47,6 +50,7 @@ public class ListItemsActivity extends AppCompatActivity {
     private ArrayList<ListItem> myListItems;
     private Button profile;
     private String Uid;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
 
@@ -54,6 +58,7 @@ public class ListItemsActivity extends AppCompatActivity {
         setContentView(R.layout.activity_list_items);
         FacebookSdk.sdkInitialize(getApplicationContext());
         AppEventsLogger.activateApp(this);
+
         // qpx
         // go to profile
         profile = (Button) findViewById(R.id.profileBtn);
